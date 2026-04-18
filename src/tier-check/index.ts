@@ -1,4 +1,6 @@
-import { Command } from 'commander';
+import { writeFile, mkdir } from 'fs/promises';
+import { dirname } from 'path';
+import { Command, InvalidArgumentError } from 'commander';
 import { Octokit } from '@octokit/rest';
 import {
   checkConformance,
@@ -22,6 +24,33 @@ function parseRepo(repo: string): { owner: string; repo: string } {
   return { owner: parts[0], repo: parts[1] };
 }
 
+type FileOutputFormat = 'json' | 'markdown';
+
+interface FileOutputSpec {
+  format: FileOutputFormat;
+  path: string;
+}
+
+function collectOutputFile(
+  value: string,
+  previous: FileOutputSpec[] = []
+): FileOutputSpec[] {
+  const sep = value.indexOf(':');
+  if (sep <= 0 || sep === value.length - 1) {
+    throw new InvalidArgumentError(
+      `'${value}' is not in '<format>:<path>' form (e.g., 'json:/tmp/scorecard.json').`
+    );
+  }
+  const format = value.slice(0, sep);
+  const path = value.slice(sep + 1);
+  if (format !== 'json' && format !== 'markdown') {
+    throw new InvalidArgumentError(
+      `format '${format}' is not supported. Expected 'json' or 'markdown'.`
+    );
+  }
+  return [...previous, { format, path }];
+}
+
 export function createTierCheckCommand(): Command {
   const tierCheck = new Command('tier-check')
     .description('Run SDK tier assessment checks against a GitHub repository')
@@ -42,8 +71,15 @@ export function createTierCheckCommand(): Command {
     .option('--days <n>', 'Limit triage check to issues created in last N days')
     .option(
       '--output <format>',
-      'Output format: json, markdown, terminal',
+      'Stdout output format: json, markdown, terminal',
       'terminal'
+    )
+    .option(
+      '--output-file <format:path>',
+      'Also write output to a file as <format>:<path>. Repeatable. Formats: json, markdown. ' +
+        'Use this to capture multiple formats from a single run.',
+      collectOutputFile,
+      [] as FileOutputSpec[]
     )
     .option(
       '--token <token>',
@@ -171,6 +207,19 @@ export function createTierCheckCommand(): Command {
         default:
           formatTerminal(scorecard);
       }
+
+      const outputFiles = options.outputFile as FileOutputSpec[];
+      await Promise.all(
+        outputFiles.map(async (spec) => {
+          const content =
+            spec.format === 'json'
+              ? formatJson(scorecard)
+              : formatMarkdown(scorecard);
+          await mkdir(dirname(spec.path), { recursive: true });
+          await writeFile(spec.path, content + '\n');
+          console.error(`  \u2713 Wrote ${spec.format} \u2192 ${spec.path}`);
+        })
+      );
     });
 
   // Subcommands for individual checks

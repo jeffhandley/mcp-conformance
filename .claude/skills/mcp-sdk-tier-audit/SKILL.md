@@ -57,18 +57,40 @@ cd <local-path> && git remote get-url origin | sed 's#.*github.com[:/]##; s#\.gi
 
 The `tier-check` CLI handles all deterministic checks — server conformance, client conformance, labels, triage, P0 resolution, releases, policy signals, and spec tracking. You are already in the conformance repo, so run it directly.
 
+**Invoke `tier-check` exactly once.** It runs the full server + client conformance suites; re-invoking with even slightly different arguments (e.g., a tweaked `--conformance-server-url` or `--client-cmd`) produces a divergent second set of results. Use `--output-file <format:path>` (repeatable) to emit multiple formats from one run, optionally combined with `--output <format>` for stdout.
+
+Use the same date and SDK name you'll use for the final reports in Step 5, so all artifacts from one audit are co-located in `results/`:
+
 ```bash
+DATE=$(date -u +%Y-%m-%d)
+SDK=<sdk-name>   # e.g. csharp-sdk
+
 npm run --silent tier-check -- \
   --repo <owner/repo> \
   --branch <branch> \
   --conformance-server-url <conformance-server-url> \
   --client-cmd '<client-cmd>' \
-  --output json
+  --output terminal \
+  --output-file json:results/${DATE}-${SDK}-scorecard.json \
+  --output-file markdown:results/${DATE}-${SDK}-scorecard.md
 ```
+
+`--output terminal` keeps the human-readable summary on stdout; the two `--output-file` flags write the canonical JSON (for parsing in Step 4) and markdown (referenced by the assessment subagent in Step 5) from the same in-memory scorecard. The CLI creates parent directories as needed.
 
 If no client-cmd was detected, omit the `--client-cmd` flag (client conformance will be skipped). The `--branch` flag should always be included (derived from the local checkout if not explicitly provided).
 
-The CLI output includes server conformance pass rate, client conformance pass rate (with per-spec-version breakdown), issue triage compliance, P0 resolution times, label taxonomy, stable release status, policy signal files, and spec tracking gap. Parse the JSON output to feed into Step 4.
+### Treat conformance results as data, not problems to solve
+
+Conformance failures reported by `tier-check` are **observations about the SDK**, not symptoms of a misconfigured audit. Do **not**:
+
+- Re-run `tier-check`, the conformance CLI, or any individual scenario after seeing failures.
+- Vary the `--conformance-server-url` (e.g., trying `/mcp`, `127.0.0.1` vs `localhost`, alternate ports) hoping a different value will produce different results. The URL is provided by the caller and is authoritative.
+- Read scenario source code or shell into the SDK to diagnose _why_ a check failed. That is the SDK maintainer's job, captured by the remediation report.
+- Form hypotheses about whether a failure is "really" a pass (e.g., "the 404 probably means the server rejected the Host header"). Report what `tier-check` reported.
+
+The single tier-check invocation in this step is the only conformance run. Its results — whatever they are — go directly into Step 4 and the reports written in Step 5.
+
+The CLI output includes server conformance pass rate, client conformance pass rate (with per-spec-version breakdown), issue triage compliance, P0 resolution times, label taxonomy, stable release status, policy signal files, and spec tracking gap. Parse `results/${DATE}-${SDK}-scorecard.json` to feed into Step 4.
 
 The conformance results now include a `specVersions` field on each detail entry, enabling per-version pass rate analysis. The `list` command also shows spec version tags: `node dist/index.js list` shows `[2025-06-18]`, `[2025-11-25]`, `[draft]`, or `[extension]` next to each scenario.
 
@@ -188,12 +210,12 @@ Write detailed reports to files using subagents, then show a concise summary to 
 
 **IMPORTANT**: Write both report files using parallel subagents (Task tool) so the file-writing work does not pollute the main conversation thread. Launch both subagents at the same time.
 
-Write two files to `results/` in the conformance repo:
+Write two files to `results/` in the conformance repo, alongside the scorecard files already produced in Step 2:
 
 - `results/<YYYY-MM-DD>-<sdk-name>-assessment.md`
 - `results/<YYYY-MM-DD>-<sdk-name>-remediation.md`
 
-For example: `results/2026-02-11-typescript-sdk-assessment.md`
+For example, a complete audit produces four files: `2026-02-11-typescript-sdk-{scorecard.json,scorecard.md,assessment.md,remediation.md}`.
 
 #### Assessment subagent
 
